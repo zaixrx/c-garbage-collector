@@ -1,4 +1,5 @@
 #include <assert.h>
+#include <string.h>
 #include <stdatomic.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -7,6 +8,7 @@
 
 #define UNTAG(p) (ChunkHeader*)((WORD)p & ~1) // 1's compliment
 #define CHUNK_SIZE 1024 - 16
+#define OFF_SB_STAT_FIELD 28 - 3
 
 #define DO_LOG
 #ifdef DO_LOG
@@ -93,22 +95,37 @@ void sweep_heap(ChunkHeader *used_chunks) {
 	}
 }
 
+static char buf[1024];
+extern char __tdata_start, end;
+
 int collect_trash() {
-	WORD stack_top, stack_bottom;
-	extern char __tdata_start, end;
+	char *start, *token;
 	FILE *statfp;
+	WORD stack_top, stack_bottom;
+	size_t counter = 0;
 
 	// https://gcc.gnu.org/onlinedocs/gcc/Extended-Asm.html
 	asm volatile ("mov %%rsp, %0" : "=r" (stack_top));
 
+	// parse to find stack_bottom
 	statfp = fopen("/proc/self/stat", "r");
 	assert(statfp != NULL);
-    	fscanf(statfp,
-    	       "%*d %*s %*c %*d %*d %*d %*d %*d %*u "
-    	       "%*lu %*lu %*lu %*lu %*lu %*lu %*ld %*ld "
-    	       "%*ld %*ld %*ld %*ld %*llu %*lu %*ld "
-    	       "%*lu %*lu %*lu %lu", &stack_bottom);
+	fgets(buf, sizeof buf, statfp);
     	fclose(statfp);
+	LOG("buffer: %s\n", buf);
+	start = strchr(buf, ')');
+	assert(start);
+	token = strtok(++start, " "); // ignore process state
+	do { token = strtok(NULL, " "); } while (token && ++counter != OFF_SB_STAT_FIELD);
+	assert(counter == OFF_SB_STAT_FIELD);
+	stack_bottom = atoll(token);
+
+	// Unreliable... maybe
+    	// fscanf(statfp,
+    	//       "%*d %*s %*c %*d %*d %*d %*d %*d %*u "
+    	//       "%*lu %*lu %*lu %*lu %*lu %*lu %*ld %*ld "
+    	//       "%*ld %*ld %*ld %*ld %*llu %*lu %*ld "
+    	//       "%*lu %*lu %*lu %lu", &stack_bottom);
 
 	// LOG("	.data start (etext)      %p\n", &__tdata_start);
 	// LOG("	.bss end (end)  %p\n", &end) ;
