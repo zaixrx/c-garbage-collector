@@ -21,11 +21,11 @@ static size_t refs_count = 0;
 static void *refs[MAX_REFERENCES];
 
 int leak_heap(ssize_t acc) {
-	LOG("--- references ---\n");
+	// LOG("--- references ---\n");
 	for (int i = 0; i < acc; ++i) {
 		void *obj = halloc(CHUNK_SIZE);
 		if (i % 3 == 0) {
-			LOG("reference at %p -> %p\n", (char*)refs + WORD_SIZE * refs_count, refs[refs_count]);
+			// LOG("reference at %p -> %p\n", (char*)refs + WORD_SIZE * refs_count, refs[refs_count]);
 			refs[refs_count++] = obj;
 		}
 		if (!obj) {
@@ -33,27 +33,18 @@ int leak_heap(ssize_t acc) {
 			return -1;
 		}
 	}
-	LOG("--- references ---\n");
+	// LOG("--- references ---\n");
 	return 0;
-}
-
-int who_said_you_need_to_understand_everything(unsigned int n) {
-	return n <= 1 || (n+2) % 3 == 0;
 }
 
 // expects untagged used_chunks
 void span_region(ChunkHeader *used_chunks, WORD *start, WORD *end) {
 	for (WORD *ptr = start; ptr < end; ptr++) {
-		// LOG("%p\n", ptr);
-		if ((WORD)&refs[0] <= (WORD)ptr && (WORD)ptr < (WORD)&refs[refs_count]) {
-			LOG("hello\n");
-		}
 		WORD ptr_addr = *ptr;
 		ChunkHeader *curr = used_chunks;
 		do {
 			if ((WORD)(curr + 1) <= ptr_addr && ptr_addr < (WORD)((char*)(curr + 1) + curr->size)) {	
 				curr->next = (ChunkHeader*)((WORD)curr->next | 1); // tag next because can't tag current!
-				LOG("hello yes curr: %p, curr->next: %p\n", curr, curr->next);
 				break;
 			}
 		} while ((curr = UNTAG(curr->next)) != used_chunks);
@@ -69,22 +60,37 @@ void span_heap(ChunkHeader *used_chunks) {
 }
 
 void sweep_heap(ChunkHeader *used_chunks) {
-	ChunkHeader *curr = used_chunks; int i = 0;
-	do {
-		int leaked = !who_said_you_need_to_understand_everything(i++);
+	WORD start = (WORD)used_chunks; // end is dynamic
+	LOG("start: 0x%lx\n", start);
+
+	int i = 0;
+	ChunkHeader *prev = used_chunks, *curr, *next;
+	for (curr = UNTAG(prev->next);; curr = next, ++i) {
 		int skip = (WORD)(curr->next) & 0x1;
-		LOG("{ used_size: %zu, used_next: %p, leaked: %s, skip: %s }\n",
-				curr->size, curr->next, leaked ? "true" : "false", skip ? "true" : "false");
-		assert(leaked != skip && "ERROR: skipping LEAKED\n");
+		// int leaked = i % 3 != 0;
+		LOG("{ %p: used_size: %zu, used_next: %p, skip: %s }\n", curr, curr->size, curr->next, skip ? "true" : "false");
+		// assert(leaked != skip && "ERROR: skipping LEAKED\n");
 		if (skip) {
-			curr->next = UNTAG(curr->next);
-			continue;
+			prev = curr;
+			next = curr->next = UNTAG(curr->next);
+		} else {
+			next = curr->next;
+			if (prev == curr) {
+				set_used_chunks(NULL);
+			} else {
+				prev->next = curr->next;
+			}
+			hfree(curr + 1);
+			LOG("Clear\n");
 		}
-		LOG("CLEARD %p\n", curr);
-		ChunkHeader* next = curr->next;
-		hfree(curr);
-		curr->next = next;
-	} while ((curr = UNTAG(curr->next)) != used_chunks);
+		if ((WORD)curr == start) break;
+	}
+
+	if ((curr = get_used_chunks())) {
+		do {
+			LOG("%p is still there\n", curr);
+		} while ((curr = UNTAG(curr->next)) != used_chunks);
+	}
 }
 
 int collect_trash() {
@@ -104,18 +110,17 @@ int collect_trash() {
     	       "%*lu %*lu %*lu %lu", &stack_bottom);
     	fclose(statfp);
 
-	LOG("	the data referencer is in %p\n", &refs);
-                                             
-	LOG("	.data start (etext)      %p\n", &__tdata_start);
-	LOG("	.bss end (end)  %p\n", &end) ;
-	LOG("	stack(top -- start) %p\n", (WORD*)stack_top);
-	LOG("	stack(bottom -- end) %p\n", (WORD*)stack_bottom);
+	// LOG("	.data start (etext)      %p\n", &__tdata_start);
+	// LOG("	.bss end (end)  %p\n", &end) ;
+	// LOG("	stack(top -- start) %p\n", (WORD*)stack_top);
+	// LOG("	stack(bottom -- end) %p\n", (WORD*)stack_bottom);
 
 	ChunkHeader *used_chunks = UNTAG(get_used_chunks());
 	span_region(used_chunks, (WORD*)&__tdata_start, (WORD*)&end);
 	span_region(used_chunks, (WORD*)stack_top, (WORD*)stack_bottom);
 	span_heap  (used_chunks);
 
+	sweep_heap (used_chunks);
 	sweep_heap (used_chunks);
 
 	return 0;

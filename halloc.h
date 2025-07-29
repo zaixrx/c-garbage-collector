@@ -31,5 +31,8 @@ extern void *halloc(size_t size);
 extern void hfree(void *ptr);
 extern void *hcalloc(size_t size);
 extern void hbfree(void *ptr, size_t size);
+
 extern ChunkHeader *get_used_chunks();
+extern void set_used_chunks(ChunkHeader *to);
+
 #endif

@@ -26,6 +26,10 @@ extern ChunkHeader *get_used_chunks() {
 	return used_chunks;
 }
 
+extern void set_used_chunks(ChunkHeader *to) {
+	used_chunks = to;
+}
+
 static inline size_t round_up_to(size_t size, size_t to) {
 	if (size % to == 0) return size;
 	return size + ((to) - (size % to));
